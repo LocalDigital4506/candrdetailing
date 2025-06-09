@@ -1,0 +1,108 @@
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+import nodemailer from 'nodemailer';
+import { z } from 'zod';
+// Contact form schema
+const insertContactRequestSchema = z.object({
+  firstName: z.string().min(1),
+  lastName: z.string().min(1),
+  email: z.string().email(),
+  phone: z.string().min(1),
+  serviceType: z.string().min(1),
+  vehicleType: z.string().min(1),
+  location: z.string().min(1),
+  message: z.string().min(1),
+});
+// Simple in-memory storage for contact requests
+class MemStorage {
+  private contactRequests: Map<number, any>;
+  private currentId: number;
+  constructor() {
+    this.contactRequests = new Map();
+    this.currentId = 1;
+  }
+  async createContactRequest(insertRequest: any) {
+    const request = {
+      id: this.currentId++,
+      ...insertRequest,
+      createdAt: new Date(),
+    };
+    this.contactRequests.set(request.id, request);
+    return request;
+  }
+}
+const storage = new MemStorage();
+function createTransporter() {
+  return nodemailer.createTransport({
+    host: 'smtp.gmail.com',
+    port: 587,
+    secure: false,
+    auth: {
+      user: 'candrdetailing3@gmail.com',
+      pass: 'qjqc osza utqq nmjx'
+    }
+  });
+}
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // Add CORS headers
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  if (req.method !== 'POST') {
+    return res.status(405).json({ message: 'Method not allowed' });
+  }
+  try {
+    console.log('Received request body:', req.body);
+    
+    const result = insertContactRequestSchema.safeParse(req.body);
+    if (!result.success) {
+      console.error('Validation failed:', result.error);
+      return res.status(400).json({
+        message: "Invalid request data",
+        errors: result.error.issues,
+      });
+    }
+    const contactRequest = await storage.createContactRequest(result.data);
+    console.log('Contact request created:', contactRequest);
+    // Send email notification
+    try {
+      const transporter = createTransporter();
+      console.log('Attempting to send email...');
+      
+      const emailResult = await transporter.sendMail({
+        from: '"C&R Detailing Website" <candrdetailing3@gmail.com>',
+        to: 'candrdetailing3@gmail.com',
+        subject: `New Contact Form Submission - ${result.data.serviceType}`,
+        html: `
+          <h2>New Contact Form Submission</h2>
+          <p><strong>Name:</strong> ${result.data.firstName} ${result.data.lastName}</p>
+          <p><strong>Email:</strong> ${result.data.email}</p>
+          <p><strong>Phone:</strong> ${result.data.phone}</p>
+          <p><strong>Service Type:</strong> ${result.data.serviceType}</p>
+          <p><strong>Vehicle Type:</strong> ${result.data.vehicleType}</p>
+          <p><strong>Location:</strong> ${result.data.location}</p>
+          <p><strong>Message:</strong></p>
+          <p>${result.data.message}</p>
+        `,
+      });
+      console.log('Email sent successfully:', emailResult.messageId);
+    } catch (emailError) {
+      console.error('Email sending failed:', emailError);
+      // Continue even if email fails - still return success to user
+    }
+    return res.status(200).json({ 
+      success: true, 
+      message: 'Contact request submitted successfully',
+      id: contactRequest.id
+    });
+  } catch (error) {
+    console.error('Contact form error:', error);
+    return res.status(500).json({ 
+      success: false,
+      message: "Failed to process contact request",
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+}
